@@ -2,7 +2,8 @@
 
 A full-stack web app for planning and protecting your **quiet hours**: sleep, study, deep focus, and family time. You describe your ideal week in plain English. The AI assistant turns that into a conflict-free schedule, sends a live reminder before each block, and scores your week with suggestions you can apply in one click.
 
-**Stack:** React 19 · Vite · Node.js · Express 5 · Claude API (structured outputs) · JWT · Server-Sent Events · node:test · Vitest
+**Frontend:** React 19 · Vite · Vitest
+**Backend:** Python 3.10+ · FastAPI · Uvicorn · Pydantic · Claude API (Anthropic Python SDK) · JWT · bcrypt · Server-Sent Events · pytest
 
 ---
 
@@ -10,46 +11,67 @@ A full-stack web app for planning and protecting your **quiet hours**: sleep, st
 
 | | |
 |---|---|
-| ✨ **Natural-language scheduling** | "Sleep 10:30pm–6:30am every night and study 7–9pm on weekdays" becomes a preview of recurring blocks. Claude returns **schema-validated JSON** (Zod + structured outputs), and the server sanitises it again before use. |
-| 💬 **AI chatbot ("Quiet")** | A floating chat assistant that holds multi-turn conversations. It uses Claude **tool calling** (via the SDK tool runner) to read your real schedule and weekly stats, and to propose new blocks. Proposals appear as cards that need your confirmation, so the bot never changes your calendar on its own. An offline intent-based bot answers when no API key is set. |
+| ✨ **Natural-language scheduling** | "Sleep 10:30pm–6:30am every night and study 7–9pm on weekdays" becomes a preview of recurring blocks. Claude returns **schema-validated JSON** (Pydantic models + structured outputs), and the server cleans it again before use. |
+| 💬 **AI chatbot ("Quiet")** | A floating chat assistant that holds multi-turn conversations. It uses Claude **tool calling** (the Python SDK's tool runner) to read your real schedule and weekly stats, and to propose new blocks. Proposals appear as cards that need your confirmation, so the bot never changes your calendar on its own. An offline intent-based bot answers when no API key is set. |
 | 🧠 **AI weekly insights** | A 0–100 quiet-time health score, plus specific suggestions (missing sleep, marathon sessions, back-to-back blocks). Each suggestion can carry a ready-made block pattern you apply with one click. |
 | 🛡️ **Conflict detection** | Every create or update is checked for overlaps, both against your calendar and within a batch. A 409 response lists each clash so the UI can offer "add the rest, skip conflicts". |
-| ⏰ **Real-time reminders** | A background scheduler checks every 30 seconds and pushes reminders and "quiet mode started" events over **SSE**. You also get browser notifications and optional email (SMTP). Each reminder is claimed before it is sent, so it fires **exactly once**. |
+| ⏰ **Real-time reminders** | A background asyncio job checks every 30 seconds and pushes reminders and "quiet mode started" events over **SSE**. You also get browser notifications and optional email (SMTP). Each reminder is claimed before it is sent, so it fires **exactly once**. |
 | 📅 **Weekly calendar** | A custom-built week view. Overnight blocks are split across days, a now-line tracks the current time, and you click any empty slot to create a block. |
 | 🔁 **Series management** | Each AI proposal becomes a series. "Delete this & following" removes the remaining occurrences together. |
-| 🔌 **Works offline from AI** | With no API key, a rule-based NLP parser and insights engine take over. On a Claude error (auth, rate limit, network), the app falls back to it automatically and shows a notice. |
+| 🔌 **Works without an AI key** | With no API key, a rule-based NLP parser and insights engine take over. On a Claude error (auth, rate limit, network), the app falls back to it automatically and shows a notice. |
 | 🔐 **Auth & safety** | bcrypt password hashing, JWT sessions, a per-user rate limit on AI calls, input validation on every route. |
 | 🔄 **Multi-tab sync** | Changes in one tab or device refresh the others live. |
 
 ## Architecture
 
 ```
-client/ (React + Vite)                 server/ (Express)
- ├─ pages/Dashboard                     ├─ routes/   auth · blocks · ai
- ├─ components/                         ├─ services/
- │   WeekCalendar, AIAssistant,         │   ai.js         Claude + automatic fallback
- │   InsightsPanel, BlockModal …        │   scheduler.js  reminder job (exactly-once)
- ├─ hooks/useEvents (SSE)               │   notifier.js   SSE hub + email
- └─ lib/schedule.js                     ├─ lib/
-     pattern → blocks, week layout,     │   blocks.js          validation + overlap detection
-     stats (local-time math)            │   heuristicParser.js offline NLP parser
-                                        │   insights.js        weekly summary + scoring
-          ── /api (Vite proxy) ──▶      └─ db.js   JSON document store (swappable)
+client/  (React + Vite)                 server/  (Python + FastAPI)
+ ├─ pages/Dashboard, AuthPage            ├─ app/
+ ├─ components/                          │   main.py        ASGI entry point (uvicorn app.main:app)
+ │   WeekCalendar, AIAssistant,          │   server.py      app factory: routes, SSE stream, serves client/dist
+ │   ChatWidget, InsightsPanel …         │   routes/        auth.py · blocks.py · ai.py
+ ├─ hooks/useEvents (SSE)                │   ai.py          Claude (structured outputs + tool runner) with fallback
+ └─ lib/schedule.js                      │   scheduler.py   reminder job (exactly-once)
+     pattern → blocks, week layout,      │   notifier.py    SSE hub + SMTP email
+     stats (local-time math)             │   blocks.py      validation + overlap detection
+                                         │   heuristic_parser.py / heuristic_chat.py   offline AI
+         ── /api (Vite proxy :8000) ──▶  │   insights.py    weekly summary + scoring
+                                         │   db.py          JSON document store (swappable)
+                                         └─ tests/         pytest: logic + API integration
 ```
+
+**How a request flows.** The React app calls `/api/...`. In development, Vite proxies those calls to FastAPI on port 8000. In production, FastAPI serves both the built React files and the API from one origin.
 
 **AI design.** The model never writes timestamps directly. Claude (or the offline parser) returns a compact *pattern*: `{ startTime, endTime, daysOfWeek, startDate, repeatWeeks }`. The browser expands it into concrete blocks in the user's own time zone. This keeps DST and time-zone math deterministic and testable, and makes the LLM output easy to validate.
 
 ## Getting started
 
-Requires **Node.js 20.6+**.
+Requires **Python 3.10+** and **Node.js 20+**.
 
 ```bash
-npm install          # installs the root tooling
-npm run setup        # installs server + client dependencies
-npm run dev          # API on :5000, React app on http://localhost:5173
+npm install          # installs the root tooling (concurrently)
+npm run setup        # pip installs server/requirements.txt + npm installs the client
+npm run dev          # FastAPI on :8000, React app on http://localhost:5173
 ```
 
-Open http://localhost:5173 and create an account.
+Open http://localhost:5173 and create an account. FastAPI's interactive API docs are at http://localhost:8000/docs.
+
+> On macOS/Linux, if `python` isn't on your PATH, use `python3`, or activate a virtual environment first:
+> `python3 -m venv .venv && source .venv/bin/activate`.
+
+### Run the pieces separately
+
+```bash
+# Backend
+cd server
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8000
+
+# Frontend (second terminal)
+cd client
+npm install
+npm run dev
+```
 
 ### How to use it
 
@@ -60,11 +82,6 @@ Open http://localhost:5173 and create an account.
 5. **Chat with "Quiet"**, the bottom-right assistant. Ask it things like *"how much sleep am I getting?"* or *"find me two focus hours on Friday"*.
 6. **Check Insights** to see your weekly score, then apply a suggestion with one click.
 
-### Troubleshooting
-
-- **Every API call returns 401 or unexpected data:** another program may already be using port 5000. On Windows, run `netstat -ano | findstr :5000` to check. Either stop that program, or set `PORT=5050` in `server/.env` and change the proxy target in `client/vite.config.js` to match.
-- **Quick single-port run:** run `npm run build`, then `PORT=5050 npm start --prefix server`, and open http://localhost:5050.
-
 ### Enable Claude (optional)
 
 ```bash
@@ -72,11 +89,16 @@ cp server/.env.example server/.env
 # then set ANTHROPIC_API_KEY=... in server/.env and restart
 ```
 
-The header badge switches from **Offline AI** to **Claude AI**. The model defaults to `claude-opus-5-5`; override it with `CLAUDE_MODEL`.
+The header badge switches from **Offline AI** to **Claude AI**. The model defaults to `claude-opus-5-5`; override it with `CLAUDE_MODEL`. Requests opt into server-side refusal fallbacks, so a declined request is retried on a fallback model automatically.
 
 ### Email reminders (optional)
 
 Fill in the `SMTP_*` values in `server/.env`, then turn on **Settings → Email reminders**.
+
+### Troubleshooting
+
+- **API calls fail with "proxy error" or unexpected 401s:** another program may already be using port 8000. On Windows, run `netstat -ano | findstr :8000` to check. Either stop that program, or change `--port 8000` in the root `package.json` (`dev:api`) and the proxy target in `client/vite.config.js` to the same new port.
+- **`python` not found:** install Python 3.10+ from python.org (tick "Add to PATH" on Windows), or use `python3`.
 
 ## Tests
 
@@ -84,34 +106,62 @@ Fill in the `SMTP_*` values in `server/.env`, then turn on **Settings → Email 
 npm test
 ```
 
-- **Server (node:test):** overlap detection, validation, the NLP parser (overnight ranges, meridiem inference, named days, "tomorrow"), time-zone conversion, insights scoring, exactly-once reminders, plus API integration tests for auth, CRUD, 409 conflicts, batch skip, series delete, and AI endpoints.
+- **Server (pytest):** overlap detection, validation, the NLP parser (overnight ranges, meridiem inference, named days, "tomorrow"), time-zone conversion, insights scoring, exactly-once reminders, JSON persistence, plus API integration tests for auth, preferences, CRUD, 409 conflicts, batch skip, series delete, AI endpoints, and SSE auth.
 - **Client (Vitest):** pattern expansion, overnight splitting across days, weekly stats.
 
-## Production build
+Run only the backend tests with `python -m pytest server -q`.
+
+## Deploy (live site on Render, free)
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Nagesh-max999/ai-quiet-hours-scheduler)
+
+The repo includes a `Dockerfile` (builds the React app, then runs FastAPI, which serves both the site and the API) and a `render.yaml` blueprint.
+
+1. Click the button above (or on [render.com](https://render.com): **New → Blueprint** and pick this repo). Sign in with GitHub if asked.
+2. Leave `ANTHROPIC_API_KEY` empty to use the offline AI, or paste a key to enable Claude. `JWT_SECRET` is generated for you.
+3. Click **Apply**. After the first build (a few minutes), the site is live at `https://ai-quiet-hours-scheduler.onrender.com` (or a similar URL Render shows you).
+
+Every push to `main` redeploys automatically.
+
+**Free plan limits:** the service sleeps after 15 minutes without visitors, so the first visit after that takes about a minute to wake up. The free plan has no persistent disk, so accounts and blocks are reset whenever the service restarts or redeploys. For permanent data, add a Render disk (paid) mounted at `/srv/server/data`, or move the store to PostgreSQL.
+
+Test the production image locally with Docker:
 
 ```bash
-npm run build                          # builds client/dist
-NODE_ENV=production JWT_SECRET=... npm start --prefix server
+docker build -t quiet-hours .
+docker run -p 8000:8000 -e JWT_SECRET=some-long-random-secret quiet-hours
+# open http://localhost:8000
 ```
 
-Express serves the built React app and the API from one origin, so it deploys to Render, Railway, or Fly.io as a single service.
+## Production (without Docker)
+
+```bash
+npm run build                                   # builds client/dist
+cd server
+ENV=production JWT_SECRET=your-long-secret python -m app    # serves the React app + API on $PORT (default 8000)
+```
+
+FastAPI serves the built React app and the API from one origin, so it deploys to Render, Railway, or Fly.io as a single Python service. Set `JWT_SECRET` in production (the server refuses to start without it when `ENV=production`).
 
 ## API
 
 | Method | Path | Description |
 |---|---|---|
+| GET | `/api/health` | Status, AI provider, email enabled |
 | POST | `/api/auth/register` · `/api/auth/login` | Returns `{ token, user }` |
 | GET / PATCH | `/api/auth/me` · `/api/auth/preferences` | Profile & reminder preferences |
 | GET | `/api/blocks?from&to` | Blocks in a range |
 | POST | `/api/blocks` | One block, or `{ blocks: [...], skipConflicts }`. Returns 409 with `conflicts` on overlap |
-| PUT / DELETE | `/api/blocks/:id` (`?series=1`) | Update (re-arms reminders) / delete one or the rest of a series |
+| PUT / DELETE | `/api/blocks/{id}` (`?series=1`) | Update (re-arms reminders) / delete one or the rest of a series |
 | POST | `/api/ai/parse` | Natural language → schedule proposals |
 | POST | `/api/ai/insights` | Weekly score + suggestions |
 | POST | `/api/ai/chat` | `{ messages: [{role, content}] }` → `{ reply, proposals, source }` |
 | GET | `/api/events?token=` | SSE stream: `reminder`, `started`, `blocks-changed` |
 
+Errors always come back as `{ "error": "message" }` with a matching HTTP status.
+
 ## Roadmap ideas
 
-- Swap the JSON store for MongoDB or PostgreSQL (all access is isolated in `db.js`)
+- Swap the JSON store for PostgreSQL (SQLAlchemy) or MongoDB; all data access is isolated in `server/app/db.py`
 - Google Calendar import to auto-detect busy time
 - Web Push via a service worker for reminders while the tab is closed

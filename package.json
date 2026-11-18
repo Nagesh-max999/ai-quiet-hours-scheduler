@@ -1,11 +1,13 @@
 {
   "name": "ai-quiet-hours-scheduler",
   "version": "1.0.0",
-  "description": "",
+  "description": "Plan and protect quiet hours: React frontend + Python (FastAPI) backend with Claude AI.",
   "scripts": {
-    "setup": "npm install --prefix server && npm install --prefix client",
-    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "test": "npm test --prefix server && npm test --prefix client",
+    "setup": "python -m pip install -r server/requirements.txt && npm install --prefix client",
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev:api\" \"npm run dev --prefix client\"",
+    "dev:api": "python -m uvicorn app.main:app --app-dir server --reload --reload-dir server --port 8000",
+    "start": "npm run build && cd server && python -m app",
+    "test": "python -m pytest server -q && npm test --prefix client",
     "build": "npm run build --prefix client"
   },
   "keywords": [],
