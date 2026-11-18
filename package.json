@@ -1,0 +1,19 @@
+{
+  "name": "ai-quiet-hours-scheduler",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "setup": "npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "test": "npm test --prefix server && npm test --prefix client",
+    "build": "npm run build --prefix client"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^10.0.7"
+  },
+  "private": true
+}
